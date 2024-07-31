@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:bdk_flutter/bdk_flutter.dart';
 import 'package:flutter/cupertino.dart';
 
@@ -8,18 +10,25 @@ class BdkClient {
   late Wallet wallet;
   late Blockchain blockchain;
   final String descriptor;
+  final String? _changeDescriptor;
   final Network network;
 
-  BdkClient(this.descriptor, this.network);
+  BdkClient(this.descriptor, this.network, {String? changeDescriptor})
+      : _changeDescriptor = changeDescriptor;
 
   Future<void> restoreWallet() async {
     try {
       await initBlockchain();
       wallet = await Wallet.create(
-          descriptor:
-              await Descriptor.create(descriptor: descriptor, network: network),
-          network: network,
-          databaseConfig: const DatabaseConfig.memory());
+        descriptor:
+            await Descriptor.create(descriptor: descriptor, network: network),
+        changeDescriptor: _changeDescriptor != null
+            ? await Descriptor.create(
+                descriptor: _changeDescriptor, network: network)
+            : null,
+        network: network,
+        databaseConfig: const DatabaseConfig.memory(),
+      );
       debugPrint(getNewAddress().address.toString());
     } on Exception {
       rethrow;
@@ -51,17 +60,27 @@ class BdkClient {
   }
 
   Future<PartiallySignedTransaction> signPsbt(
-      PartiallySignedTransaction psbt) async {
+    PartiallySignedTransaction psbt,
+  ) async {
     await wallet.sign(
         psbt: psbt,
         signOptions: const SignOptions(
-            trustWitnessUtxo: true,
-            allowAllSighashes: false,
-            removePartialSigs: true,
-            tryFinalize: true,
-            signWithTapInternalKey: true,
-            allowGrinding: false));
+          trustWitnessUtxo: true,
+          allowAllSighashes: false,
+          removePartialSigs: true,
+          tryFinalize: true,
+          signWithTapInternalKey: true,
+          allowGrinding: false,
+        ));
     return psbt;
+  }
+
+  Future<String> processPsbt(String base64Psbt) async {
+    final psbt = await PartiallySignedTransaction.fromString(base64Psbt);
+    debugPrint('Processing proposal PSBT: ${psbt.asString()}');
+    final signedPsbt = await signPsbt(psbt);
+    debugPrint('Signed proposal PSBT: ${signedPsbt.asString()}');
+    return signedPsbt.asString();
   }
 
   Future<PartiallySignedTransaction> createPsbt(
@@ -108,5 +127,10 @@ class BdkClient {
 
   List<LocalUtxo> listUnspent() {
     return wallet.listUnspent();
+  }
+
+  bool isOwned(Uint8List bytes) {
+    final script = ScriptBuf(bytes: bytes);
+    return wallet.isMine(script: script);
   }
 }
