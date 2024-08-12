@@ -42,7 +42,7 @@ class BdkClient {
       blockchain = await Blockchain.create(
           config: BlockchainConfig.esplora(
               config: EsploraConfig(
-                  baseUrl: "https://mutinynet.com/api",
+                  baseUrl: "https://mutinynet.ltbl.io/api",
                   stopGap: BigInt.from(144))));
     } on Exception {
       rethrow;
@@ -59,9 +59,11 @@ class BdkClient {
     return res;
   }
 
-  Future<PartiallySignedTransaction> signPsbt(
-    PartiallySignedTransaction psbt,
+  Future<String> processPsbt(
+    String psbtBase64,
   ) async {
+    debugPrint('Signing PSBT: $psbtBase64');
+    final psbt = await PartiallySignedTransaction.fromString(psbtBase64);
     await wallet.sign(
         psbt: psbt,
         signOptions: const SignOptions(
@@ -72,19 +74,11 @@ class BdkClient {
           signWithTapInternalKey: true,
           allowGrinding: false,
         ));
-    return psbt;
+    debugPrint('Signed PSBT: ${psbt.asString()}');
+    return psbt.asString();
   }
 
-  Future<String> processPsbt(String base64Psbt) async {
-    final psbt = await PartiallySignedTransaction.fromString(base64Psbt);
-    debugPrint('Processing proposal PSBT: ${psbt.asString()}');
-    final signedPsbt = await signPsbt(psbt);
-    debugPrint('Signed proposal PSBT: ${signedPsbt.asString()}');
-    return signedPsbt.asString();
-  }
-
-  Future<PartiallySignedTransaction> createPsbt(
-      String addressStr, int amount, int fee) async {
+  Future<String> createPsbt(String addressStr, int amount, int fee) async {
     try {
       final txBuilder = TxBuilder();
       final address = await Address.fromString(s: addressStr, network: network);
@@ -93,7 +87,19 @@ class BdkClient {
           .addRecipient(script, BigInt.from(amount))
           .feeAbsolute(BigInt.from(fee))
           .finish(wallet);
-      return signPsbt(psbt);
+      debugPrint('Created PSBT: ${psbt.asString()}');
+      await wallet.sign(
+          psbt: psbt,
+          signOptions: const SignOptions(
+            trustWitnessUtxo: true,
+            allowAllSighashes: false,
+            removePartialSigs: true,
+            tryFinalize: true,
+            signWithTapInternalKey: true,
+            allowGrinding: false,
+          ));
+      debugPrint('Signed original PSBT: ${psbt.asString()}');
+      return psbt.asString();
     } on Exception {
       rethrow;
     }
@@ -111,7 +117,7 @@ class BdkClient {
       final tx = psbt.extractTx();
       final txid = await blockchain.broadcast(transaction: tx);
       return txid;
-    } on Exception {
+    } catch (e) {
       rethrow;
     }
   }

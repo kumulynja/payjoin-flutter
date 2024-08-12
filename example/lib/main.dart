@@ -51,8 +51,8 @@ class _PayJoinState extends State<PayJoin> {
 
   String displayText = "";
   String pjUri = "";
-  late PartiallySignedTransaction senderPsbt;
-  late PartiallySignedTransaction processedAndFinalizedPsbt;
+  late String senderPsbt;
+  late String processedAndFinalizedPsbt;
   @override
   void initState() {
     sender.restoreWallet();
@@ -151,7 +151,7 @@ class _PayJoinState extends State<PayJoin> {
                       (((await uri.amount()) ?? 0) * 100000000).toInt();
                   final psbt = (await sender.createPsbt(address, amount, 2000));
                   debugPrint(
-                    "\nOriginal sender psbt: ${psbt.toString()}",
+                    "\nOriginal sender psbt: $psbt",
                   );
                   setState(() {
                     senderPsbt = psbt;
@@ -202,17 +202,14 @@ class _PayJoinState extends State<PayJoin> {
                   final payJoinProposal = await provisionalProposal
                       .finalizeProposal(processPsbt: (e) async {
                     debugPrint("\n Original receiver unsigned psbt: $e");
-                    return (await receiver.signPsbt(
-                            await PartiallySignedTransaction.fromString(e)))
-                        .toString();
+                    return (await receiver.processPsbt(e)).toString();
                   });
                   final receiverPsbt = await payJoinProposal.psbt();
                   debugPrint("\n Original receiver psbt: $receiverPsbt");
                   final receiverProcessedPsbt = await contextV1.processResponse(
                       response: utf8.encode(receiverPsbt));
-                  final senderProcessedPsbt = (await sender.signPsbt(
-                      await PartiallySignedTransaction.fromString(
-                          receiverProcessedPsbt)));
+                  final senderProcessedPsbt =
+                      (await sender.processPsbt(receiverProcessedPsbt));
                   setState(() {
                     processedAndFinalizedPsbt = senderProcessedPsbt;
                   });
@@ -226,8 +223,11 @@ class _PayJoinState extends State<PayJoin> {
                 )),
             TextButton(
                 onPressed: () async {
-                  final res =
-                      await sender.broadcastPsbt(processedAndFinalizedPsbt);
+                  final res = await sender.broadcastPsbt(
+                    await PartiallySignedTransaction.fromString(
+                      processedAndFinalizedPsbt,
+                    ),
+                  );
                   debugPrint("Broadcast success: $res");
                 },
                 child: Text(

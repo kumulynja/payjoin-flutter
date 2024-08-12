@@ -46,7 +46,6 @@ dependencies:
     git:
       url: https://github.com/LtbLightning/bdk-flutter
       ref: main
-
   google_fonts: ^6.2.1
   http: ^1.2.2
 

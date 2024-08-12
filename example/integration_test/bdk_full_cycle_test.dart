@@ -46,14 +46,14 @@ void main() {
       int amount = (((uri.amount()) ?? 0) * 100000000).toInt();
 
       final senderPsbt = (await sender.createPsbt(address, amount, 2000));
-      final senderPsbtBase64 = senderPsbt.toString();
+
       debugPrint(
-        "\nOriginal sender psbt: $senderPsbtBase64",
+        "\nOriginal sender psbt: $senderPsbt",
       );
 
       // Receiver part
       final (req, ctx) = await (await (await send.RequestBuilder.fromPsbtAndUri(
-                  psbtBase64: senderPsbtBase64, pjUri: uri.checkPjSupported()))
+                  psbtBase64: senderPsbt, pjUri: uri.checkPjSupported()))
               .buildWithAdditionalFee(
                   maxFeeContribution: BigInt.from(10000),
                   minFeeRate: BigInt.zero,
@@ -116,19 +116,18 @@ void main() {
       final payJoinProposal =
           await provisionalProposal.finalizeProposal(processPsbt: (e) async {
         debugPrint("\n Original receiver unsigned psbt: $e");
-        return (await receiver
-                .signPsbt(await bdk.PartiallySignedTransaction.fromString(e)))
-            .toString();
+        return await receiver.processPsbt(e);
       });
       final receiverPsbt = await payJoinProposal.psbt();
       debugPrint("\n Original receiver psbt: $receiverPsbt");
       final receiverProcessedPsbt =
           await ctx.processResponse(response: utf8.encode(receiverPsbt));
-      final senderProcessedPsbt = (await sender.signPsbt(
-          await bdk.PartiallySignedTransaction.fromString(
-              receiverProcessedPsbt)));
+      final senderProcessedPsbt =
+          await sender.processPsbt(receiverProcessedPsbt);
 
-      final txid = await sender.broadcastPsbt(senderProcessedPsbt);
+      final txid = await sender.broadcastPsbt(
+        await bdk.PartiallySignedTransaction.fromString(senderProcessedPsbt),
+      );
       debugPrint("Broadcast success: $txid");
     });
   });
@@ -152,43 +151,36 @@ void main() {
           "order battle scare loud useless island tone vague skin present ensure hip",
         ),
       );
+
       final receiverDescriptor = await bdk.Descriptor.newBip86(
         secretKey: receiverSecret,
         network: network,
         keychain: bdk.KeychainKind.externalChain,
-      );
-      final receiverChangeDescriptor = await bdk.Descriptor.newBip86(
-        secretKey: receiverSecret,
-        network: network,
-        keychain: bdk.KeychainKind.internalChain,
       );
       final senderDescriptor = await bdk.Descriptor.newBip86(
         secretKey: senderSecret,
         network: network,
         keychain: bdk.KeychainKind.externalChain,
       );
-      final senderChangeDescriptor = await bdk.Descriptor.newBip86(
-        secretKey: senderSecret,
-        network: network,
-        keychain: bdk.KeychainKind.internalChain,
-      );
+
       final receiver = BdkClient(
-        receiverDescriptor.asString(),
+        receiverDescriptor.toStringPrivate(),
         network,
-        changeDescriptor: receiverChangeDescriptor.asString(),
       );
       final sender = BdkClient(
-        senderDescriptor.asString(),
+        senderDescriptor.toStringPrivate(),
         network,
-        changeDescriptor: senderChangeDescriptor.asString(),
       );
-      await receiver.restoreWallet();
-      await sender.restoreWallet();
-      await receiver.syncWallet();
-      await sender.syncWallet();
+      await Future.wait([
+        receiver.restoreWallet(),
+        sender.restoreWallet(),
+      ]);
+      await Future.wait([
+        receiver.syncWallet(),
+        sender.syncWallet(),
+      ]);
       print('Receiver balance: ${receiver.getBalance()}');
       print('Sender balance: ${sender.getBalance()}');
-
       return (sender, receiver);
     }
 
@@ -227,15 +219,13 @@ void main() {
 
     Future<String> buildOriginalPsbt(
       BdkClient sender,
-      payjoin_uri.PjUri pjUri,
+      payjoin_uri.Uri pjUri,
     ) async {
       double uriAmount = pjUri.amount() ?? 0;
       int amountSat = (uriAmount * 100000000.0).round();
-      final psbt = await sender.createPsbt(pjUri.address(), amountSat, 2000);
+      final psbt = await sender.createPsbt(pjUri.address(), amountSat, 500);
 
-      final psbtBase64 = psbt.asString();
-      debugPrint('Original Sender Psbt for request: $psbtBase64');
-      return psbtBase64;
+      return psbt;
     }
 
     Future<PayjoinProposal> handleDirectoryProposal(
@@ -243,7 +233,7 @@ void main() {
       UncheckedProposal proposal,
     ) async {
       final originalTxBytes = await proposal.extractTxToScheduleBroadcast();
-      final toBroadcastInFailureCase =
+      final _ =
           await bdk.Transaction.fromBytes(transactionBytes: originalTxBytes);
 
       // Receive Check 1: Can Broadcast
@@ -360,12 +350,11 @@ void main() {
       // **********************
       // Inside the Sender:
       // Create a funded PSBT (not broadcasted) to address with amount given in the pjUri
-      final pjUri =
-          (await payjoin_uri.Uri.fromStr(pjUriString)).checkPjSupported();
+      final pjUri = (await payjoin_uri.Uri.fromStr(pjUriString));
       final psbt = await buildOriginalPsbt(sender, pjUri);
       final requestBuilder = await send.RequestBuilder.fromPsbtAndUri(
         psbtBase64: psbt,
-        pjUri: pjUri,
+        pjUri: pjUri.checkPjSupported(),
       );
       final reqCtx = await requestBuilder.buildRecommended(
         minFeeRate: BigInt.zero,
